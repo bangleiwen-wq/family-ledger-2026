@@ -6,16 +6,16 @@ from streamlit_gsheets import GSheetsConnection
 from datetime import datetime, timedelta
 
 # --- 页面配置 ---
-st.set_page_config(page_title="2026 爱家记账 Pro", page_icon="🏠", layout="wide")
+st.set_page_config(page_title="2026 全能家庭CFO", page_icon="💰", layout="wide")
 
-# --- 自定义样式 (让报表更专业) ---
+# --- 样式优化 ---
 st.markdown("""
     <style>
-    .metric-card {background-color: #f0f2f6; border-radius: 10px; padding: 15px; margin: 10px 0;}
+    .metric-card {background-color: #f9f9f9; border-left: 5px solid #ff4b4b; padding: 10px; margin: 5px;}
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🏠 2026 家庭财务指挥中心 (Pro)")
+st.title("💰 2026 全能家庭 CFO (V3.0)")
 
 # --- 连接 Google Sheets ---
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -33,255 +33,216 @@ def save_data(df, worksheet_name):
     conn.update(worksheet=worksheet_name, data=df)
     st.cache_data.clear()
 
-# --- 工具函数：计算环比 ---
-def calculate_delta(current_val, prev_val):
-    if prev_val == 0:
-        return 0
-    return (current_val - prev_val) / prev_val * 100
-
-# --- 侧边栏导航 ---
+# --- 侧边栏 ---
 with st.sidebar:
     st.header("功能导航")
-    menu = st.radio("", ["📝 日常记账", "🏦 资产盘点", "📊 深度报表"])
-    st.divider()
-    st.info("💡 这是一个专业版工具，支持多维度资产分析与环比数据对比。")
+    menu = st.radio("", ["📝 流水记账 (Flow)", "🏦 资产盘点 (Stock)", "📈 投资与报表 (Report)"])
+    st.info("💡 V3.0 新特性：\n1. 支出关联具体账户\n2. 投资盈亏自动计算\n3. 资产与账本联动")
+
+# 读取资产数据用于下拉框 (全局复用)
+df_assets_global = get_data("assets")
+# 获取所有“归属人-资产名”的组合，做成列表
+if not df_assets_global.empty:
+    # 拼接一下名字，方便选择，例如 "老公-支付宝"
+    df_assets_global['full_name'] = df_assets_global['owner'].astype(str) + " - " + df_assets_global['asset_name'].astype(str)
+    # 获取去重后的资产列表
+    asset_options = sorted(df_assets_global['full_name'].unique().tolist())
+else:
+    asset_options = ["现金", "银行卡", "支付宝", "微信"] # 默认兜底
 
 # ==========================================
-# 模块 1: 日常记账 (Cash Flow)
+# 模块 1: 流水记账 (Flow) - 支持关联账户
 # ==========================================
-if menu == "📝 日常记账":
+if menu == "📝 流水记账 (Flow)":
     st.header("📝 记一笔")
     
     df_logs = get_data("logs")
 
-    with st.expander("录入交易", expanded=True):
-        with st.form("entry_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                date = st.date_input("日期", datetime.now())
-                txn_type = st.selectbox("类型", ["支出", "收入"], help="房贷车贷请选支出")
-                amount = st.number_input("金额", min_value=0.01, step=10.0, format="%.2f")
-            with col2:
-                # 升级后的分类体系
-                category_options = {
-                    "刚性支出": ["房贷还款", "车贷还款", "房租物业", "水电煤网", "保险费"],
-                    "家庭育儿": ["育儿-奶粉/食品", "育儿-尿裤/用品", "育儿-教育/课外", "育儿-医疗/疫苗", "育儿-玩具/书籍"],
-                    "日常生活": ["餐饮美食", "交通出行", "超市购物", "服饰美容", "通讯费"],
-                    "休闲人情": ["休闲娱乐", "人情红包", "孝敬长辈", "旅游度假"],
-                    "其他": ["医疗保健", "投资亏损", "其他支出"],
-                    "收入来源": ["工资收入", "奖金/分红", "投资收益", "兼职外快", "礼金收入"]
-                }
-                
-                # 平铺分类用于下拉框 (也可以做二级联动，这里为了方便直接平铺)
-                flat_categories = []
-                for group, items in category_options.items():
-                    flat_categories += items
-                
-                category = st.selectbox("分类", flat_categories)
-                user = st.selectbox("经手人/对象", ["老公", "老婆", "家庭公用", "孩子"])
-                note = st.text_input("备注 (必填: 具体的名目)")
+    with st.form("entry_form", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            date = st.date_input("日期", datetime.now())
+            txn_type = st.selectbox("类型", ["支出", "收入", "投资投入"], help="买基金请选'投资投入'")
+        with col2:
+            amount = st.number_input("金额", min_value=0.01, format="%.2f")
+            # 这里的账户列表来自资产表
+            account = st.selectbox("支付/入账账户", asset_options, help="这笔钱是从哪个资产里出去/进来的？")
+        with col3:
+            # 动态分类
+            if txn_type == "投资投入":
+                category = "理财本金"
+            else:
+                category = st.selectbox("分类", [
+                    "餐饮美食", "交通出行", "居家生活", "房贷还款", "车贷还款", 
+                    "育儿-教育", "育儿-生活", "保险费", "人情红包", 
+                    "工资收入", "兼职收入", "其他"
+                ])
+            user = st.selectbox("经手人", ["老公", "老婆", "家庭公用"])
+        
+        note = st.text_input("备注", placeholder="如果是定投，请备注具体基金名")
 
-            submitted = st.form_submit_button("💾 提交记录", use_container_width=True)
+        submitted = st.form_submit_button("💾 提交记录", use_container_width=True)
 
-            if submitted:
-                new_entry = pd.DataFrame([{
-                    "date": pd.to_datetime(date),
-                    "type": txn_type,
-                    "amount": amount,
-                    "category": category,
-                    "user": user,
-                    "note": note
-                }])
-                
-                if df_logs.empty:
-                    updated_df = new_entry
-                else:
-                    updated_df = pd.concat([df_logs, new_entry], ignore_index=True)
-                
-                save_data(updated_df, "logs")
-                st.success("✅ 记账成功！")
+        if submitted:
+            # 数据结构需包含 account
+            new_entry = pd.DataFrame([{
+                "date": pd.to_datetime(date),
+                "type": txn_type,
+                "amount": amount,
+                "category": category,
+                "account": account, # 新增字段
+                "user": user,
+                "note": note
+            }])
+            
+            if df_logs.empty:
+                updated_df = new_entry
+            else:
+                updated_df = pd.concat([df_logs, new_entry], ignore_index=True)
+            
+            save_data(updated_df, "logs")
+            st.success(f"✅ 已记录：从【{account}】{txn_type} {amount} 元")
+            if txn_type == "投资投入":
+                st.toast("💡 提示：'投资投入'已记录为本金，请记得去'资产盘点'更新该基金的最新市值！")
 
-    # 简单流水展示
+    # 展示最近记录
     if not df_logs.empty:
-        st.subheader("📋 最近 10 笔记录")
-        st.dataframe(
-            df_logs.sort_values(by="date", ascending=False).head(10), 
-            use_container_width=True,
-            hide_index=True
-        )
+        st.subheader("📋 最近流水")
+        # 简单处理一下显示顺序
+        display_cols = ['date', 'type', 'amount', 'category', 'account', 'user', 'note']
+        # 确保列存在，防止旧数据报错
+        existing_cols = [c for c in display_cols if c in df_logs.columns]
+        st.dataframe(df_logs[existing_cols].sort_values(by="date", ascending=False).head(10), use_container_width=True)
 
 # ==========================================
-# 模块 2: 资产盘点 (Net Worth) - 升级版
+# 模块 2: 资产盘点 (Stock)
 # ==========================================
-elif menu == "🏦 资产盘点":
-    st.header("🏦 家庭资产负债表")
-    st.caption("建议每月 1 号更新一次各项账户余额。")
-
+elif menu == "🏦 资产盘点 (Stock)":
+    st.header("🏦 资产校准 (Snapshot)")
+    st.info("💡 这是一个【校准】动作。请定期打开你的银行App/券商App，填入看到的【最终余额/市值】。")
+    
     df_assets = get_data("assets")
 
-    # --- 更新资产表单 ---
-    with st.expander("➕ 更新账户余额", expanded=True):
-        with st.form("asset_form", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
+    with st.expander("➕ 更新/新增资产", expanded=True):
+        with st.form("asset_update"):
+            c1, c2 = st.columns(2)
             with c1:
-                a_owner = st.selectbox("归属人", ["老公", "老婆", "家庭/联名"])
-                a_name = st.text_input("账户名称", placeholder="例: 支付宝余额, 招行卡, 股票-茅台")
+                owner = st.selectbox("归属人", ["老公", "老婆", "家庭/联名"])
+                # 这里允许手动输入新名字，也允许选旧名字
+                existing_names = df_assets['asset_name'].unique().tolist() if not df_assets.empty else []
+                # 使用 selectbox 但允许输入不太容易，Streamlit建议直接用 text_input 配合 placeholder
+                asset_name = st.text_input("资产名称", placeholder="如：易方达蓝筹、招行卡、借呗")
             with c2:
-                a_type = st.selectbox("资产性质", 
-                    ["流动资金 (现金/活期)", "低风险理财 (定期/债基)", "高风险投资 (股票/偏股)", "固定资产 (房/车估值)", "负债 (信用卡/贷款余额)"]
-                )
-            with c3:
-                a_balance = st.number_input("当前总值 (负债填负数)", step=100.0)
-                a_date = st.date_input("更新日期", datetime.now())
-
-            asset_submitted = st.form_submit_button("💾 保存资产快照", use_container_width=True)
-
-            if asset_submitted:
-                if not a_name:
-                    st.error("必须填写账户名称")
-                else:
-                    # 确保包含 owner 字段
-                    new_asset = pd.DataFrame([{
-                        "date": pd.to_datetime(a_date),
-                        "asset_name": a_name,
-                        "asset_type": a_type,
-                        "owner": a_owner, 
-                        "balance": a_balance
-                    }])
-                    
-                    if df_assets.empty:
-                        updated_assets = new_asset
-                    else:
-                        updated_assets = pd.concat([df_assets, new_asset], ignore_index=True)
-                    
-                    save_data(updated_assets, "assets")
-                    st.success(f"✅ {a_owner} 的 {a_name} 更新成功！")
-
-    # --- 资产透视 ---
-    if not df_assets.empty:
-        st.divider()
-        
-        # 逻辑：取每个账户最新的一条记录
-        latest_assets = df_assets.sort_values('date').groupby(['asset_name', 'owner']).tail(1).reset_index(drop=True)
-        
-        total_net_worth = latest_assets['balance'].sum()
-        
-        # 核心大指标
-        st.metric("💰 家庭当前净资产 (Net Worth)", f"¥ {total_net_worth:,.2f}")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("按归属人分析")
-            # 饼图：谁管的钱多？
-            fig_owner = px.pie(latest_assets, values='balance', names='owner', hole=0.4, title="资金归属分布")
-            st.plotly_chart(fig_owner, use_container_width=True)
+                asset_type = st.selectbox("类型", ["资金账户", "基金/股票", "固定资产", "负债"])
+                balance = st.number_input("当前最新余额/市值", step=100.0)
             
+            date_update = st.date_input("校准日期", datetime.now())
+            
+            if st.form_submit_button("💾 保存快照", use_container_width=True):
+                if not asset_name:
+                    st.error("请填写名称")
+                else:
+                    new_asset = pd.DataFrame([{
+                        "date": pd.to_datetime(date_update),
+                        "asset_name": asset_name,
+                        "asset_type": asset_type,
+                        "owner": owner,
+                        "balance": balance
+                    }])
+                    if df_assets.empty:
+                        df_new = new_asset
+                    else:
+                        df_new = pd.concat([df_assets, new_asset], ignore_index=True)
+                    save_data(df_new, "assets")
+                    st.success("资产数据已更新！")
+
+    # 资产展示逻辑 (只取最新)
+    if not df_assets.empty:
+        latest = df_assets.sort_values('date').groupby(['asset_name', 'owner']).tail(1).reset_index(drop=True)
+        st.divider()
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            total = latest['balance'].sum()
+            st.metric("家庭总净值", f"¥ {total:,.2f}")
+            # 投资类资产总值
+            invest_total = latest[latest['asset_type'] == '基金/股票']['balance'].sum()
+            st.metric("投资持仓市值", f"¥ {invest_total:,.2f}")
         with col2:
-            st.subheader("按资产性质分析")
-            # 饼图：投资结构
-            fig_type = px.pie(latest_assets, values='balance', names='asset_type', title="资产配置结构 (风险分布)")
-            st.plotly_chart(fig_type, use_container_width=True)
-
-        st.subheader("📊 各项资产明细")
-        # 格式化表格
-        display_df = latest_assets[['owner', 'asset_name', 'asset_type', 'balance', 'date']].sort_values(by='owner')
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+            fig = px.bar(latest, x='balance', y='asset_name', color='owner', orientation='h', title="各项资产分布")
+            st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# 模块 3: 深度报表 (Analytics) - 专业级
+# 模块 3: 投资与报表 (Report) - 核心升级
 # ==========================================
-elif menu == "📊 深度报表":
-    st.header("📊 财务深度分析")
+elif menu == "📈 投资与报表 (Report)":
+    st.header("📈 财务深度分析")
     
     df_logs = get_data("logs")
-    
-    if df_logs.empty:
-        st.info("请先录入数据")
-    else:
-        # --- 时间筛选与数据准备 ---
-        now = datetime.now()
-        this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        last_month_start = (this_month_start - timedelta(days=1)).replace(day=1)
-        
-        # 本月数据
-        df_this_month = df_logs[
-            (df_logs['date'] >= this_month_start) & 
-            (df_logs['date'] < (this_month_start + timedelta(days=32)).replace(day=1))
-        ]
-        
-        # 上月数据 (用于环比)
-        df_last_month = df_logs[
-            (df_logs['date'] >= last_month_start) & 
-            (df_logs['date'] < this_month_start)
-        ]
-        
-        # --- 1. 核心 KPI 看板 (带环比) ---
-        c1, c2, c3, c4 = st.columns(4)
-        
-        # 计算本月
-        tm_income = df_this_month[df_this_month['type']=='收入']['amount'].sum()
-        tm_expense = df_this_month[df_this_month['type']=='支出']['amount'].sum()
-        tm_balance = tm_income - tm_expense
-        tm_savings_rate = (tm_balance / tm_income * 100) if tm_income > 0 else 0
-        
-        # 计算上月
-        lm_income = df_last_month[df_last_month['type']=='收入']['amount'].sum()
-        lm_expense = df_last_month[df_last_month['type']=='支出']['amount'].sum()
-        
-        # 渲染指标
-        c1.metric("本月收入", f"¥{tm_income:,.0f}", delta=f"{calculate_delta(tm_income, lm_income):.1f}% 环比", delta_color="normal")
-        c2.metric("本月支出", f"¥{tm_expense:,.0f}", delta=f"{calculate_delta(tm_expense, lm_expense):.1f}% 环比", delta_color="inverse")
-        c3.metric("本月结余", f"¥{tm_balance:,.0f}")
-        c4.metric("本月储蓄率", f"{tm_savings_rate:.1f}%", help="理想储蓄率建议在 30% 以上")
-        
-        st.divider()
-        
-        # --- 2. 支出结构深度分析 ---
-        col_main, col_sub = st.columns([2, 1])
-        
-        with col_main:
-            st.subheader("💸 本月钱花哪儿了？")
-            if not df_this_month[df_this_month['type']=='支出'].empty:
-                # 旭日图：不仅看大类，还能看具体的备注（如果有数据量够大）或者直接看分类
-                fig_sun = px.sunburst(
-                    df_this_month[df_this_month['type']=='支出'], 
-                    path=['category', 'user'], 
-                    values='amount',
-                    title="支出结构透视 (点击扇形可下钻)",
-                    color_discrete_sequence=px.colors.qualitative.Pastel
-                )
-                st.plotly_chart(fig_sun, use_container_width=True)
-            else:
-                st.info("本月暂无支出")
-                
-        with col_sub:
-            st.subheader("🏆 支出排行榜")
-            if not df_this_month.empty:
-                top_expense = df_this_month[df_this_month['type']=='支出'].groupby('category')['amount'].sum().sort_values(ascending=False).head(5)
-                st.table(top_expense)
+    df_assets = get_data("assets")
 
-        # --- 3. 房贷/车贷/育儿 专项追踪 ---
-        st.divider()
-        st.subheader("🎯 重点项目追踪 (2026年度)")
+    tab1, tab2 = st.tabs(["📊 收支月报", "🚀 投资盈亏分析"])
+
+    # --- Tab 1: 传统收支 ---
+    with tab1:
+        if not df_logs.empty:
+            # 筛选本月
+            now = datetime.now()
+            this_month = df_logs[(df_logs['date'].dt.month == now.month) & (df_logs['date'].dt.year == now.year)]
+            
+            # 排除 "投资投入" 类型，因为那不是消费，是资产转移
+            expense_df = this_month[this_month['type'] == '支出']
+            income_df = this_month[this_month['type'] == '收入']
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("本月真实消费", f"¥ {expense_df['amount'].sum():,.2f}")
+            c2.metric("本月入账", f"¥ {income_df['amount'].sum():,.2f}")
+            c3.metric("结余", f"¥ {(income_df['amount'].sum() - expense_df['amount'].sum()):,.2f}")
+            
+            # 账户流出分析 (Feature 1 要求的)
+            if 'account' in expense_df.columns and not expense_df.empty:
+                st.subheader("💳 本月哪个账户花钱最多？")
+                account_group = expense_df.groupby('account')['amount'].sum().reset_index()
+                fig_acc = px.pie(account_group, values='amount', names='account', hole=0.4)
+                st.plotly_chart(fig_acc, use_container_width=True)
+
+    # --- Tab 2: 投资盈亏 (Feature 2 核心) ---
+    with tab2:
+        st.subheader("🚀 基金/股票 投资仪表盘")
         
-        # 筛选特定关键词
-        special_tags = ["房贷", "车贷", "育儿"]
-        # 创建一个逻辑 mask
-        mask = df_logs['category'].str.contains('|'.join(special_tags))
-        df_special = df_logs[mask]
-        
-        if not df_special.empty:
-            # 柱状图：按月堆叠
-            df_special['month_str'] = df_special['date'].dt.strftime('%Y-%m')
-            fig_special = px.bar(
-                df_special, 
-                x='month_str', 
-                y='amount', 
-                color='category', 
-                title="房贷·车贷·育儿 趋势图",
-                text_auto=True
-            )
-            st.plotly_chart(fig_special, use_container_width=True)
+        # 1. 计算总投入 (本金)
+        # 逻辑：从 logs 里找 type="投资投入" 的记录
+        if not df_logs.empty and not df_assets.empty:
+            invest_logs = df_logs[df_logs['type'] == '投资投入']
+            
+            # 按账户汇总本金 (比如 "招商白酒" 投了多少)
+            # 注意：这里我们假设 logs 里的 'account' 选的是资金来源，
+            # 如果要精确到投了哪个基金，需要在 'note' 或 'category' 里区分，
+            # 为了简化 V3.0，我们这里做一个概览对比。
+            
+            total_invested = invest_logs['amount'].sum()
+            
+            # 2. 计算当前市值
+            latest_assets = df_assets.sort_values('date').groupby('asset_name').tail(1)
+            # 筛选出类型是“基金/股票”的
+            invest_assets = latest_assets[latest_assets['asset_type'].str.contains('基金|股票')]
+            current_market_value = invest_assets['balance'].sum()
+            
+            # 3. 计算盈亏
+            pnl = current_market_value - total_invested
+            pnl_ratio = (pnl / total_invested * 100) if total_invested > 0 else 0
+            
+            # 展示
+            col1, col2, col3 = st.columns(3)
+            col1.metric("累计投入本金", f"¥ {total_invested:,.2f}")
+            col2.metric("当前持仓市值", f"¥ {current_market_value:,.2f}")
+            col3.metric("浮动盈亏", f"¥ {pnl:,.2f}", f"{pnl_ratio:.2f}%", delta_color="normal")
+            
+            st.caption("注：'累计投入本金' 统计自记账流水中的【投资投入】项；'当前持仓市值' 统计自资产盘点中的最新数据。")
+            
+            # 趋势图
+            st.divider()
+            st.subheader("📈 投资记录明细")
+            st.dataframe(invest_logs, use_container_width=True)
+            
         else:
-            st.caption("暂无房贷、车贷或育儿相关记录。")
+            st.info("暂无投资相关数据。请在'流水记账'中录入类型为'投资投入'的记录，并在'资产盘点'中更新基金市值。")
