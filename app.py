@@ -171,144 +171,204 @@ elif menu == "🏦 资产盘点 (Stock)":
             fig = px.bar(latest, x='balance', y='asset_name', color='owner', orientation='h', title="各项资产分布")
             st.plotly_chart(fig, use_container_width=True)
 # ==========================================
-# 模块 3: 投资与报表 (Report) - V3.1 终极融合版
+# 模块 3: 投资与报表 (Report) - V4.0 交互透视版
 # ==========================================
 elif menu == "📈 投资与报表 (Report)":
-    st.header("📈 财务深度分析驾驶舱")
+    st.header("📊 财务深度分析 (V4.0)")
     
     df_logs = get_data("logs")
     df_assets = get_data("assets")
 
-    # 定义三个子页面
-    tab1, tab2, tab3 = st.tabs(["📊 收支透视", "🚀 投资仪表盘", "🏠 专项追踪"])
+    # --- 顶部全局筛选栏 ---
+    with st.expander("🗓️ 报表筛选设置", expanded=True):
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            # 获取数据中存在的所有月份
+            if not df_logs.empty:
+                df_logs['month_str'] = df_logs['date'].dt.strftime('%Y-%m')
+                all_months = sorted(df_logs['month_str'].unique(), reverse=True)
+                selected_month = st.selectbox("选择月份", all_months, index=0)
+            else:
+                selected_month = datetime.now().strftime('%Y-%m')
+        with col_f2:
+            selected_user = st.multiselect("筛选成员", ["老公", "老婆", "家庭公用"], default=["老公", "老婆", "家庭公用"])
 
-    # --- Tab 1: 收支透视 (日常开销去哪了？) ---
+    # --- 数据准备 ---
+    if not df_logs.empty:
+        # 1. 过滤月份
+        df_view = df_logs[df_logs['month_str'] == selected_month]
+        # 2. 过滤成员
+        if selected_user:
+            df_view = df_view[df_view['user'].isin(selected_user)]
+        
+        # 分离收支
+        expense_df = df_view[df_view['type'] == '支出'].copy()
+        income_df = df_view[df_view['type'] == '收入'].copy()
+    else:
+        expense_df = pd.DataFrame()
+        income_df = pd.DataFrame()
+
+    # --- 核心页面 ---
+    tab1, tab2, tab3 = st.tabs(["📊 支出透视 (消费)", "💰 资产与投资", "📅 趋势对比"])
+
+    # === Tab 1: 支出透视 (最直观的消费分析) ===
     with tab1:
-        if not df_logs.empty:
-            now = datetime.now()
-            # 筛选本月
-            this_month = df_logs[(df_logs['date'].dt.month == now.month) & (df_logs['date'].dt.year == now.year)]
-            # 排除投资投入，只看消费
-            expense_df = this_month[this_month['type'] == '支出']
-            income_df = this_month[this_month['type'] == '收入']
+        if expense_df.empty:
+            st.info(f"{selected_month} 暂无支出记录")
+        else:
+            # 1. 核心大数字
+            total_exp = expense_df['amount'].sum()
+            total_inc = income_df['amount'].sum()
+            balance = total_inc - total_exp
             
-            # 1. 核心指标
-            c1, c2, c3 = st.columns(3)
-            c1.metric("本月真实消费", f"¥ {expense_df['amount'].sum():,.2f}")
-            c2.metric("本月入账", f"¥ {income_df['amount'].sum():,.2f}")
-            balance = income_df['amount'].sum() - expense_df['amount'].sum()
-            c3.metric("本月结余", f"¥ {balance:,.2f}", delta_color="normal" if balance > 0 else "inverse")
-            
+            k1, k2, k3 = st.columns(3)
+            k1.metric("本月总支出", f"¥ {total_exp:,.2f}", border=True)
+            k2.metric("本月总收入", f"¥ {total_inc:,.2f}", border=True)
+            k3.metric("本月结余", f"¥ {balance:,.2f}", delta_color="normal" if balance>0 else "inverse", border=True)
+
             st.divider()
 
-            # 2. 图表分析区
-            col_chart1, col_chart2 = st.columns(2)
+            # 2. 矩形树图 (Treemap) - 替代饼图
+            st.subheader("🗺️ 消费结构全景图 (点击方块可下钻)")
+            st.caption("矩形越大代表花钱越多。点击某个分类（如'餐饮'），可查看该分类下的具体备注细项。")
             
-            with col_chart1:
-                st.subheader("🥧 钱花在什么地方？(分类)")
-                if not expense_df.empty:
-                    # 旭日图：同时显示一级分类和经手人
-                    fig_cat = px.sunburst(
-                        expense_df, 
-                        path=['category', 'user'], 
-                        values='amount',
-                        color='category',
-                        title=f"{now.month}月 支出结构细分"
-                    )
-                    st.plotly_chart(fig_cat, use_container_width=True)
-                else:
-                    st.info("本月暂无支出数据")
+            # 为了让图表更直观，如果备注为空，填一个默认值
+            expense_df['note_display'] = expense_df['note'].replace("", "无备注")
+            
+            fig_tree = px.treemap(
+                expense_df, 
+                path=[px.Constant("总支出"), 'category', 'note_display'], # 层次：总 -> 分类 -> 备注
+                values='amount',
+                color='category', # 不同分类不同颜色
+                hover_data=['user', 'date'],
+                color_discrete_sequence=px.colors.qualitative.Pastel
+            )
+            fig_tree.update_traces(textinfo="label+value") # 显示名称+金额
+            st.plotly_chart(fig_tree, use_container_width=True)
 
-            with col_chart2:
-                st.subheader("💳 钱从哪个账户出的？(渠道)")
-                if 'account' in expense_df.columns and not expense_df.empty:
-                    account_group = expense_df.groupby('account')['amount'].sum().reset_index()
-                    fig_acc = px.pie(account_group, values='amount', names='account', hole=0.4, title="支付渠道占比")
-                    st.plotly_chart(fig_acc, use_container_width=True)
+            # 3. 透视明细表 (带小计和合计)
+            st.divider()
+            st.subheader("🧾 分类支出明细表 (含小计)")
             
-            # 3. 年度趋势 (柱状图)
-            st.subheader("📅 年度收支趋势")
-            # 按月汇总
-            df_logs['month_str'] = df_logs['date'].dt.strftime('%Y-%m')
-            # 过滤掉投资投入，只看收支
-            df_trend = df_logs[df_logs['type'].isin(['收入', '支出'])]
-            if not df_trend.empty:
-                monthly_trend = df_trend.groupby(['month_str', 'type'])['amount'].sum().reset_index()
-                fig_trend = px.bar(
-                    monthly_trend, 
-                    x='month_str', y='amount', color='type', 
-                    barmode='group',
-                    color_discrete_map={'支出': '#EF553B', '收入': '#00CC96'},
-                    title="2026 每月收支对比"
+            # 制作透视数据
+            # 按分类分组求和
+            category_group = expense_df.groupby('category')['amount'].sum().reset_index()
+            category_group = category_group.sort_values('amount', ascending=False)
+            
+            # 这里的交互逻辑：左边选分类，右边看明细
+            c_sel1, c_sel2 = st.columns([1, 2])
+            
+            with c_sel1:
+                st.markdown("**1️⃣ 各类汇总 (从高到低)**")
+                # 计算百分比
+                category_group['占比'] = (category_group['amount'] / total_exp * 100).map('{:.1f}%'.format)
+                # 格式化金额
+                category_group['金额'] = category_group['amount'].map('¥ {:,.2f}'.format)
+                
+                # 展示简单的汇总表
+                st.dataframe(
+                    category_group[['category', '金额', '占比']], 
+                    hide_index=True, 
+                    use_container_width=True,
+                    height=400
                 )
-                st.plotly_chart(fig_trend, use_container_width=True)
 
-    # --- Tab 2: 投资仪表盘 (钱生钱了吗？) ---
+            with c_sel2:
+                st.markdown("**2️⃣ 详细流水账单 (含合计)**")
+                # 增加一个"全部"选项
+                cat_options = ["(查看全部)"] + category_group['category'].tolist()
+                selected_cat_detail = st.selectbox("🔍 筛选具体分类查看流水:", cat_options)
+                
+                if selected_cat_detail == "(查看全部)":
+                    detail_data = expense_df
+                else:
+                    detail_data = expense_df[expense_df['category'] == selected_cat_detail]
+                
+                # 整理显示列
+                display_cols = detail_data[['date', 'category', 'note', 'user', 'account', 'amount']].copy()
+                display_cols['date'] = display_cols['date'].dt.strftime('%m-%d')
+                display_cols = display_cols.sort_values('date', ascending=False)
+                
+                # --- 关键：增加合计行 ---
+                # 计算当前表格的总计
+                current_total = display_cols['amount'].sum()
+                # 创建一个合计行 DataFrame
+                total_row = pd.DataFrame([{
+                    'date': '🔴 合计', 
+                    'category': '', 
+                    'note': '', 
+                    'user': '', 
+                    'account': '', 
+                    'amount': current_total
+                }])
+                # 拼接到最后
+                final_display = pd.concat([display_cols, total_row], ignore_index=True)
+                
+                st.dataframe(
+                    final_display, 
+                    column_config={
+                        "date": "日期",
+                        "category": "分类",
+                        "note": "备注说明",
+                        "user": "经手人",
+                        "account": "支付账户",
+                        "amount": st.column_config.NumberColumn("金额", format="¥ %.2f")
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+
+    # === Tab 2: 资产与投资 (V3.0 逻辑保留) ===
     with tab2:
-        st.subheader("🚀 财富增值中心")
-        
-        if not df_logs.empty and not df_assets.empty:
-            # 1. 计算逻辑
+        st.subheader("🚀 资产净值与投资")
+        if not df_assets.empty:
+            # 1. 资产总览
+            latest_assets = df_assets.sort_values('date').groupby(['asset_name', 'owner']).tail(1)
+            total_net_worth = latest_assets['balance'].sum()
+            
+            c1, c2 = st.columns(2)
+            c1.metric("家庭当前净资产", f"¥ {total_net_worth:,.2f}")
+            
+            # 投资部分
             invest_logs = df_logs[df_logs['type'] == '投资投入']
             total_invested = invest_logs['amount'].sum()
-            
-            latest_assets = df_assets.sort_values('date').groupby(['asset_name', 'owner']).tail(1)
-            # 筛选 基金/股票 类资产
             invest_assets = latest_assets[latest_assets['asset_type'].str.contains('基金|股票|理财')]
             current_market_value = invest_assets['balance'].sum()
-            
             pnl = current_market_value - total_invested
             pnl_ratio = (pnl / total_invested * 100) if total_invested > 0 else 0
             
-            # 2. 盈亏指标
-            kpi1, kpi2, kpi3 = st.columns(3)
-            kpi1.metric("累计投入本金", f"¥ {total_invested:,.2f}", help="所有记账流水中标记为'投资投入'的总和")
-            kpi2.metric("当前持仓市值", f"¥ {current_market_value:,.2f}", help="资产盘点中所有'基金/股票'类资产的最新余额总和")
-            kpi3.metric("总浮动盈亏", f"¥ {pnl:,.2f}", f"{pnl_ratio:.2f}%")
+            c2.metric("投资浮动盈亏", f"¥ {pnl:,.2f}", f"{pnl_ratio:.2f}%")
             
             st.divider()
-            
-            # 3. 投资分布图
-            c1, c2 = st.columns(2)
-            with c1:
-                st.caption("📈 我们买了哪些基金/股票？")
-                if not invest_assets.empty:
-                    fig_inv = px.pie(invest_assets, values='balance', names='asset_name', title="投资持仓分布")
-                    st.plotly_chart(fig_inv, use_container_width=True)
-            
-            with c2:
-                st.caption("👤 谁的投资眼光更好？")
-                if not invest_assets.empty:
-                    owner_pnl = invest_assets.groupby('owner')['balance'].sum().reset_index()
-                    fig_owner_inv = px.bar(owner_pnl, x='owner', y='balance', title="家庭成员持仓市值对比")
-                    st.plotly_chart(fig_owner_inv, use_container_width=True)
+            st.subheader("📈 重点账户监控")
+            # 展示余额最多的5个账户
+            top_assets = latest_assets.sort_values('balance', ascending=False).head(5)
+            fig_bar = px.bar(top_assets, x='balance', y='asset_name', color='owner', orientation='h', title="Top 5 资产账户")
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-    # --- Tab 3: 专项追踪 (房贷/车贷/育儿) ---
+    # === Tab 3: 趋势对比 (年度视角) ===
     with tab3:
-        st.subheader("🎯 重点项目年度追踪")
-        st.caption("自动筛选包含 '房贷', '车贷', '育儿', '保险' 关键词的支出")
-        
-        # 关键词筛选逻辑
-        tags = ["房贷", "车贷", "育儿", "保险"]
-        mask = df_logs['category'].astype(str).str.contains('|'.join(tags))
-        df_special = df_logs[mask]
-        
-        if not df_special.empty:
-            # 统计总额
-            total_special = df_special['amount'].sum()
-            st.metric("本年度重点项目总支出", f"¥ {total_special:,.2f}")
+        st.subheader("📅 年度收支趋势")
+        # 排除投资投入
+        df_trend = df_logs[df_logs['type'].isin(['收入', '支出'])].copy()
+        if not df_trend.empty:
+            # 按月汇总
+            monthly_trend = df_trend.groupby(['month_str', 'type'])['amount'].sum().reset_index()
             
-            # 趋势堆叠图
-            df_special['month'] = df_special['date'].dt.strftime('%Y-%m')
-            fig_special = px.bar(
-                df_special, 
-                x='month', y='amount', color='category', 
-                title="重点支出月度变化",
-                text_auto=True
+            fig_trend = px.bar(
+                monthly_trend, 
+                x='month_str', y='amount', color='type', 
+                barmode='group',
+                color_discrete_map={'支出': '#EF553B', '收入': '#00CC96'},
+                title="每月收支对比柱状图",
+                text_auto='.2s'
             )
-            st.plotly_chart(fig_special, use_container_width=True)
+            st.plotly_chart(fig_trend, use_container_width=True)
             
-            # 明细表
-            st.dataframe(df_special[['date', 'category', 'amount', 'note', 'user']].sort_values(by='date', ascending=False), use_container_width=True)
-        else:
-            st.info("暂无相关记录。请在记账时选择包含'房贷/育儿'等字样的分类。")
+            st.divider()
+            st.subheader("📉 结余走势")
+            # 计算每月结余
+            df_pivot = monthly_trend.pivot(index='month_str', columns='type', values='amount').fillna(0)
+            df_pivot['结余'] = df_pivot.get('收入', 0) - df_pivot.get('支出', 0)
+            
+            st.line_chart(df_pivot['结余'])
