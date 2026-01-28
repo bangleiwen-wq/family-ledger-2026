@@ -171,44 +171,42 @@ elif menu == "🏦 资产盘点 (Stock)":
             fig = px.bar(latest, x='balance', y='asset_name', color='owner', orientation='h', title="各项资产分布")
             st.plotly_chart(fig, use_container_width=True)
 # ==========================================
-# 模块 3: 投资与报表 (Report) - V5.1 预算预警版
+# 模块 3: 投资与报表 (Report) - V5.2 修复版
 # ==========================================
 elif menu == "📈 投资与报表 (Report)":
-    st.header("📊 财务深度分析 (V5.1)")
+    st.header("📊 财务深度分析 (V5.2)")
     
+    # 确保数据加载
     df_logs = get_data("logs")
     df_assets = get_data("assets")
 
-    # --- 1. 预算设置中心 (新增) ---
-    with st.sidebar.expander("⚙️ 每月预算设置", expanded=False):
-        st.write("设置每月固定支出预算：")
-        b_house = st.number_input("房贷预算", value=5000)
-        b_car = st.number_input("车贷预算", value=2000)
-        b_life = st.number_input("生活费(伙食等)预算", value=3000)
-        # 你可以根据自己的分类名修改下面的 key
+    # --- 1. 预算设置中心 (已填入你的固定数值) ---
+    with st.sidebar.expander("⚙️ 每月预算设置", expanded=True):
+        st.write("🔧 调整每月固定预算：")
+        b_car = st.number_input("车贷预算", value=5555.56, step=100.0)
+        b_house = st.number_input("房贷预算", value=1800.0, step=100.0)
+        b_life = st.number_input("基本伙食预算", value=3000.0, step=100.0)
+        
+        # 建立匹配映射 (请确保你记账时的分类名包含这些关键词)
         budget_map = {
-            "房贷": b_house,
             "车贷": b_car,
-            "餐饮伙食": b_life, # 确保这里的名称和你记账时选的分类名一致
-            "生活费": b_life
+            "房贷": b_house,
+            "餐饮": b_life
         }
 
     # --- 2. 顶部全局筛选栏 ---
-    with st.expander("🗓️ 报表筛选设置", expanded=True):
+    if not df_logs.empty:
+        df_logs['month_str'] = df_logs['date'].dt.strftime('%Y-%m')
+        all_months = sorted(df_logs['month_str'].unique(), reverse=True)
+        
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            if not df_logs.empty:
-                df_logs['month_str'] = df_logs['date'].dt.strftime('%Y-%m')
-                all_months = sorted(df_logs['month_str'].unique(), reverse=True)
-                selected_month = st.selectbox("选择月份", all_months, index=0)
-            else:
-                selected_month = datetime.now().strftime('%Y-%m')
+            selected_month = st.selectbox("选择月份", all_months, index=0)
         with col_f2:
             all_users = ["老公", "老婆", "家庭公用"]
             selected_user = st.multiselect("筛选成员", all_users, default=all_users)
 
-    # --- 3. 数据准备 ---
-    if not df_logs.empty:
+        # 数据过滤
         df_view = df_logs[df_logs['month_str'] == selected_month]
         if selected_user:
             df_view = df_view[df_view['user'].isin(selected_user)]
@@ -216,86 +214,82 @@ elif menu == "📈 投资与报表 (Report)":
         expense_df = df_view[df_view['type'] == '支出'].copy()
         income_df = df_view[df_view['type'] == '收入'].copy()
     else:
-        expense_df = pd.DataFrame()
-        income_df = pd.DataFrame()
+        st.info("💡 尚无消费记录，请先去『记账』模块录入数据吧！")
+        st.stop()
 
-    # --- 4. 预算进度条分析 (新增核心功能) ---
-    if not expense_df.empty:
-        st.subheader("⚠️ 关键预算执行进度")
-        cols = st.columns(len(budget_map))
+    # --- 3. 关键预算进度条 (根据你的需求定制) ---
+    st.subheader("🚨 固定支出预警")
+    b_cols = st.columns(len(budget_map))
+    
+    for idx, (cat_name, b_amount) in enumerate(budget_map.items()):
+        # 模糊匹配分类名
+        actual_spent = expense_df[expense_df['category'].str.contains(cat_name, na=False)]['amount'].sum()
+        progress = min(actual_spent / b_amount, 1.0) if b_amount > 0 else 0.0
         
-        for idx, (cat_name, b_amount) in enumerate(budget_map.items()):
-            # 计算该分类已花的钱
-            actual_spent = expense_df[expense_df['category'].str.contains(cat_name, na=False)]['amount'].sum()
-            percent = min(actual_spent / b_amount, 1.2) if b_amount > 0 else 0 # 最高显示120%
+        with b_cols[idx]:
+            # 状态颜色
+            if actual_spent > b_amount:
+                st.error(f"**{cat_name}·超支**")
+            elif actual_spent >= b_amount * 0.9:
+                st.warning(f"**{cat_name}·告急**")
+            else:
+                st.success(f"**{cat_name}·正常**")
             
-            with cols[idx % len(cols)]:
-                # 颜色逻辑：超过90%变橙色，超过100%变红色
-                bar_color = "normal"
-                if percent >= 1.0:
-                    st.error(f"**{cat_name}·超支**")
-                elif percent >= 0.8:
-                    st.warning(f"**{cat_name}·告急**")
-                else:
-                    st.success(f"**{cat_name}·正常**")
-                
-                st.progress(percent if percent <= 1.0 else 1.0)
-                st.caption(f"预算 ¥{b_amount:,.0f} | 已花 ¥{actual_spent:,.0f}")
+            st.progress(progress)
+            st.caption(f"预算: ¥{b_amount:,.2f}")
+            st.caption(f"已花: ¥{actual_spent:,.2f}")
 
-    # --- 5. 核心页面 Tabs ---
+    # --- 4. 核心功能 Tabs ---
     tab1, tab_inc, tab2, tab3 = st.tabs(["📊 支出透视", "💰 收入透视", "🏦 资产与投资", "📅 趋势对比"])
 
-    # === Tab 1: 支出透视 ===
     with tab1:
         if expense_df.empty:
-            st.info(f"{selected_month} 暂无支出记录")
+            st.info("本月暂无支出")
         else:
+            t1_c1, t1_c2 = st.columns(2)
             total_exp = expense_df['amount'].sum()
-            total_inc = income_df['amount'].sum()
-            balance = total_inc - total_exp
+            t1_c1.metric("本月总支出", f"¥ {total_exp:,.2f}")
             
-            # 顶部大数字看板
-            k1, k2, k3 = st.columns(3)
-            k1.metric("本月总支出", f"¥ {total_exp:,.2f}")
-            # 计算总储蓄率
-            save_rate = (balance/total_inc*100) if total_inc > 0 else 0
-            k2.metric("本月结余", f"¥ {balance:,.2f}", delta=f"{save_rate:.1f}% 储蓄率")
-            k3.metric("支出笔数", f"{len(expense_df)} 笔")
-
-            st.divider()
+            # 支出构成图
+            expense_df['category'] = expense_df['category'].fillna("未分类")
+            expense_df['note'] = expense_df['note'].fillna("无备注")
             
-            # 矩形树图
-            expense_df['note'] = expense_df['note'].fillna("").astype(str)
-            expense_df['category'] = expense_df['category'].fillna("未分类").astype(str)
-            expense_df['note_display'] = expense_df['note'].apply(lambda x: "无备注" if x.strip() == "" else x)
-            
-            fig_tree_exp = px.treemap(
+            fig_tree = px.treemap(
                 expense_df, 
-                path=[px.Constant("总支出"), 'category', 'note_display'],
+                path=[px.Constant("支出"), 'category', 'note'],
                 values='amount',
-                color='category', 
-                color_discrete_sequence=px.colors.qualitative.Pastel
+                color='amount',
+                color_continuous_scale='Reds'
             )
-            st.plotly_chart(fig_tree_exp, use_container_width=True)
+            st.plotly_chart(fig_tree, use_container_width=True)
+            
+            st.markdown("**明细清单**")
+            st.dataframe(expense_df[['date', 'category', 'amount', 'note', 'user']], use_container_width=True)
 
-            # 详细列表
-            st.markdown("**🔍 支出详细流水**")
-            st.dataframe(
-                expense_df[['date', 'category', 'amount', 'note', 'user', 'account']].sort_values('date', ascending=False),
-                hide_index=True,
-                use_container_width=True
-            )
-
-    # === Tab 2: 收入透视 ===
     with tab_inc:
         if income_df.empty:
-            st.info(f"{selected_month} 暂无收入记录")
+            st.info("本月暂无收入")
         else:
             total_inc = income_df['amount'].sum()
             st.metric("本月总收入", f"¥ {total_inc:,.2f}")
             
-            income_df['note'] = income_df['note'].fillna("").astype(str)
-            income_df['category'] = income_df['category'].fillna("其他收入").astype(str)
-            income_df['note_display'] = income_df['note'].apply(lambda x: "无备注" if x.strip() == "" else x)
+            fig_inc = px.pie(income_df, values='amount', names='category', hole=0.4, title="收入来源构成")
+            st.plotly_chart(fig_inc, use_container_width=True)
+            
+            st.markdown("**收入明细**")
+            st.dataframe(income_df[['date', 'category', 'amount', 'note', 'user']], use_container_width=True)
 
-            fig_tree
+    with tab2:
+        st.subheader("🏦 资产现状")
+        if not df_assets.empty:
+            latest = df_assets.sort_values('date').groupby(['asset_name']).tail(1)
+            st.metric("预估总资产", f"¥ {latest['balance'].sum():,.2f}")
+            fig_asset = px.bar(latest, x='asset_name', y='balance', color='asset_type', title="资产账户分布")
+            st.plotly_chart(fig_asset, use_container_width=True)
+
+    with tab3:
+        st.subheader("📅 收支趋势对比")
+        # 汇总每月数据
+        trend_data = df_logs[df_logs['type'].isin(['收入', '支出'])].groupby(['month_str', 'type'])['amount'].sum().reset_index()
+        fig_trend = px.line(trend_data, x='month_str', y='amount', color='type', markers=True)
+        st.plotly_chart(fig_trend, use_container_width=True)
